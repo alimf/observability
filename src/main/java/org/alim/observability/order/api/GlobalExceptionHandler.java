@@ -6,6 +6,10 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import org.alim.observability.order.domain.OrderNotFoundException;
+import org.alim.observability.order.service.PaymentException;
+
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.extern.slf4j.Slf4j;
 
 @RestControllerAdvice
@@ -23,6 +27,40 @@ public class GlobalExceptionHandler {
         ApiError.of(
           "ORDER_NOT_FOUND",
           exception.getMessage()
+        )
+      );
+  }
+
+  @ExceptionHandler(PaymentException.class)
+  public ResponseEntity<ApiError> handlePaymentFailure(
+    PaymentException exception
+  ) {
+
+    log.warn("Payment failure: {}", exception.getMessage());
+
+    return ResponseEntity
+      .status(HttpStatus.BAD_GATEWAY)
+      .body(
+        ApiError.of(
+          "PAYMENT_FAILED",
+          exception.getMessage()
+        )
+      );
+  }
+
+  @ExceptionHandler(CallNotPermittedException.class)
+  public ResponseEntity<ApiError> handleCircuitOpen(
+    CallNotPermittedException exception
+  ) {
+
+    log.warn("Payment circuit breaker open: {}", exception.getMessage());
+
+    return ResponseEntity
+      .status(HttpStatus.SERVICE_UNAVAILABLE)
+      .body(
+        ApiError.of(
+          "PAYMENT_SERVICE_UNAVAILABLE",
+          "Payment service is temporarily unavailable, please retry shortly"
         )
       );
   }

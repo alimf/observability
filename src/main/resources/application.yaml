@@ -1,24 +1,29 @@
 spring:
-
   application:
     name: observability
 
   datasource:
-    url: ${DATABASE_URL}
-    username: ${DATABASE_USERNAME}
-    password: ${DATABASE_PASSWORD}
+    url: jdbc:postgresql://localhost:5432/observability?currentSchema=app_schema
+    username: observability
+    password: observability
 
-  jpa:
-    open-in-view: false
+  flyway:
+    enabled: true
+    schemas: app_schema
+    create-schemas: true
+    locations: classpath:db/migration
+
+  jjpa:
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: app_schema
 
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
-
 management:
-
   endpoints:
     web:
       exposure:
@@ -29,27 +34,54 @@ management:
           - prometheus
 
   endpoint:
-
     health:
       probes:
         enabled: true
+      show-details: when-authorized
+
+  health:
+    circuitbreakers:
+      enabled: true
 
   tracing:
     sampling:
-      probability: 0.1
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
 
   metrics:
     distribution:
       percentiles-histogram:
         http.server.requests: true
+        orders.creation.duration: true
+    tags:
+      application: ${spring.application.name}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      paymentClient:
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        register-health-indicator: true
+
+  retry:
+    instances:
+      paymentClient:
+        max-attempts: 3
+        wait-duration: 200ms
 
 
 logging:
-
   structured:
     format:
       console: ecs
 
   level:
     root: INFO
-    com.example.observability: INFO
+    org.alim.observability: INFO

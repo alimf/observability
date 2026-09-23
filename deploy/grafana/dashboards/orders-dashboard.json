@@ -1,0 +1,73 @@
+{
+  "title": "Orders - Observability",
+  "uid": "orders-observability",
+  "timezone": "browser",
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Order throughput",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(orders_created_total[1m]))",
+          "legendFormat": "created/sec"
+        },
+        {
+          "expr": "sum(rate(orders_payment_success_total[1m]))",
+          "legendFormat": "paid/sec"
+        },
+        {
+          "expr": "sum(rate(orders_creation_failures_total[1m]))",
+          "legendFormat": "failed/sec"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Order failure rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(orders_creation_failures_total[5m])) / clamp_min(sum(rate(orders_created_total[5m])), 1e-9)",
+          "legendFormat": "failure ratio"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Order creation latency (p50/p95/p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(orders_creation_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(orders_creation_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(orders_creation_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Payment circuit breaker state",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "resilience4j_circuitbreaker_state{name=\"paymentClient\"}",
+          "legendFormat": "{{state}}"
+        }
+      ]
+    }
+  ]
+}

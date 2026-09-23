@@ -1,0 +1,45 @@
+groups:
+  - name: observability-app
+    rules:
+
+      - alert: AppDown
+        expr: up{job="observability-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Observability app is unreachable"
+          description: "Prometheus has not been able to scrape {{ $labels.job }} for 1 minute."
+
+      - alert: HighOrderFailureRate
+        expr: |
+          rate(orders_creation_failures_total[5m])
+          /
+          clamp_min(rate(orders_created_total[5m]), 1e-9)
+          > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High order creation failure rate"
+          description: "More than 20% of order creation attempts have failed over the last 5 minutes."
+
+      - alert: HighOrderCreationLatencyP99
+        expr: |
+          histogram_quantile(0.99, sum(rate(orders_creation_duration_seconds_bucket[5m])) by (le))
+          > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order creation p99 latency is high"
+          description: "p99 order creation latency has exceeded 1s for 5 minutes, which usually means the payment gateway is slow."
+
+      - alert: PaymentCircuitBreakerOpen
+        expr: resilience4j_circuitbreaker_state{name="paymentClient", state="open"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Payment circuit breaker is open"
+          description: "The paymentClient circuit breaker has been open for 1 minute; orders are failing fast instead of calling the payment gateway."
