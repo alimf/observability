@@ -9,15 +9,17 @@ spring:
 
   flyway:
     enabled: true
+    default-schema: app_schema
     schemas: app_schema
     create-schemas: true
     locations: classpath:db/migration
 
-  jjpa:
+  jpa:
     hibernate:
       ddl-auto: validate
     properties:
       hibernate:
+        create_namespaces: true
         default_schema: app_schema
 
   lifecycle:
