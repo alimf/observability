@@ -10,12 +10,16 @@ description = 'observability'
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(27)
     }
 }
 
 repositories {
     mavenCentral()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
 }
 
 dependencies {
@@ -49,14 +53,14 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
 
     // Lombok
-    compileOnly 'org.projectlombok:lombok'
-    annotationProcessor 'org.projectlombok:lombok'
+    compileOnly 'org.projectlombok:lombok:1.18.48'
+    annotationProcessor 'org.projectlombok:lombok:1.18.48'
 
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'com.h2database:h2'
-    testCompileOnly 'org.projectlombok:lombok'
-    testAnnotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok:1.18.48'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
