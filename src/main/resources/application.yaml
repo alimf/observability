@@ -45,9 +45,16 @@ management:
     circuitbreakers:
       enabled: true
 
+  observations:
+    annotations:
+      # Enables @Observed (spans + timers) on application methods.
+      enabled: true
+
   tracing:
     sampling:
-      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+      # 1.0 locally so every trace ID found in Loki resolves in Tempo.
+      # Lower this in production and accept that some log->trace links will 404.
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
 
   otlp:
     tracing:
@@ -80,9 +87,23 @@ resilience4j:
 
 
 logging:
+  file:
+    # Tailed by Grafana Alloy (deploy/alloy/config.alloy) through a read-only bind mount.
+    name: ${LOG_PATH:logs}/observability.log
+
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
+      total-size-cap: 200MB
+
   structured:
     format:
       console: ecs
+      file: ecs
+    ecs:
+      service:
+        environment: ${APP_ENVIRONMENT:local}
 
   level:
     root: INFO

@@ -17,6 +17,9 @@ import org.alim.observability.order.api.OrderResponse;
 import org.alim.observability.order.domain.Order;
 import org.alim.observability.order.domain.OrderStatus;
 
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -46,6 +49,8 @@ class OrderServiceTest {
     orderService = new OrderService(orderRepository, paymentClient, metrics);
     when(orderRepository.save(any(Order.class)))
       .thenAnswer(invocation -> invocation.getArgument(0));
+    when(metrics.orderCreationDuration())
+            .thenReturn(Timer.builder("orders.creation.duration").register(new SimpleMeterRegistry()));
   }
 
   @Test

@@ -12,7 +12,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "sum(rate(orders_created_total[1m]))",
+          "expr": "sum(rate(orders_total[1m]))",
           "legendFormat": "created/sec"
         },
         {
@@ -32,7 +32,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "sum(rate(orders_creation_failures_total[5m])) / clamp_min(sum(rate(orders_created_total[5m])), 1e-9)",
+          "expr": "sum(rate(orders_creation_failures_total[5m])) / clamp_min(sum(rate(orders_total[5m])), 1e-9)",
           "legendFormat": "failure ratio"
         }
       ]

@@ -15,7 +15,7 @@ groups:
         expr: |
           rate(orders_creation_failures_total[5m])
           /
-          clamp_min(rate(orders_created_total[5m]), 1e-9)
+          clamp_min(rate(orders_total[5m]), 1e-9)
           > 0.2
         for: 5m
         labels:

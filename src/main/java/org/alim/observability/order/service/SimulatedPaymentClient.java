@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
+import io.micrometer.observation.annotation.Observed;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -24,6 +25,8 @@ public class SimulatedPaymentClient implements PaymentClient {
   @Override
   @Retry(name = "paymentClient")
   @CircuitBreaker(name = "paymentClient")
+  // Innermost aspect (unordered), so every retry attempt gets its own span.
+  @Observed(name = "payment.authorize", contextualName = "payment authorize")
   public void authorize(UUID orderId, BigDecimal amount) {
 
     simulateNetworkLatency();

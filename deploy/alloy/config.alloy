@@ -1,0 +1,116 @@
+// Log pipeline: discover -> tail -> parse ECS JSON -> labels + structured metadata -> Loki.
+//
+// The app runs on the host and writes logs/observability.log, which docker-compose
+// bind-mounts read-only at /var/log/app. To move to containers or Kubernetes, replace
+// only the discovery/source blocks (e.g. discovery.kubernetes + loki.source.kubernetes);
+// the loki.process and loki.write blocks stay the same.
+
+logging {
+	level  = "info"
+	format = "logfmt"
+}
+
+// ---------------------------------------------------------------------------
+// Discovery + source
+// ---------------------------------------------------------------------------
+
+local.file_match "app" {
+	path_targets = [{
+		// Only the active file; rotated files are gzipped (*.gz) and were already shipped.
+		"__path__" = "/var/log/app/*.log",
+		"source"   = "file",
+		// Fallback for lines that aren't valid JSON; overwritten by the JSON service.name.
+		"service_name" = "unknown_service",
+	}]
+	sync_period = "5s"
+}
+
+loki.source.file "app" {
+	targets    = local.file_match.app.targets
+	forward_to = [loki.process.app.receiver]
+	// Read position per file is persisted in --storage.path (alloy-data volume), so
+	// restarts resume where they left off and rotation is followed by inode.
+}
+
+// ---------------------------------------------------------------------------
+// Processing
+// ---------------------------------------------------------------------------
+
+loki.process "app" {
+	forward_to = [loki.write.default.receiver]
+
+	// Spring Boot's ECS formatter writes flat, dotted keys ("log.level"), which
+	// JMESPath needs quoted. A line that isn't JSON is passed through unchanged
+	// (no fields extracted) rather than dropped.
+	stage.json {
+		expressions = {
+			timestamp    = "\"@timestamp\"",
+			level        = "\"log.level\"",
+			service_name = "\"service.name\"",
+			environment  = "\"service.environment\"",
+			trace_id     = "traceId",
+			span_id      = "spanId",
+			request_id   = "requestId",
+		}
+	}
+
+	// Use the application's event time, not the time Alloy read the line.
+	stage.timestamp {
+		source = "timestamp"
+		format = "RFC3339Nano"
+	}
+
+	// Indexed labels: low cardinality only (one value per service/env, ~5 levels).
+	stage.labels {
+		values = {
+			service_name = "",
+			environment  = "",
+			level        = "",
+		}
+	}
+
+	// Per-request identifiers are unbounded, so they go to structured metadata:
+	// stored alongside each line and filterable, but not part of the stream index.
+	stage.structured_metadata {
+		values = {
+			trace_id   = "",
+			span_id    = "",
+			request_id = "",
+		}
+	}
+
+	// Non-JSON lines (e.g. JVM output before Logback starts) end up without a level;
+	// mark them so they're easy to find instead of silently blending in.
+	stage.match {
+		selector = "{source=\"file\", level=\"\"}"
+
+		stage.static_labels {
+			values = {level = "unknown"}
+		}
+	}
+
+	// loki.source.file adds the file path as a label; it adds nothing useful here
+	// and would fan out streams if more files were tailed.
+	stage.label_drop {
+		values = ["filename"]
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sink
+// ---------------------------------------------------------------------------
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+
+		// Retry with backoff on 429/5xx/connection errors. With these values Alloy keeps
+		// retrying a batch for roughly an hour before dropping it. Retried failures are
+		// NOT logged; watch the metrics on :12345/metrics instead:
+		//   loki_write_request_duration_seconds_count{status_code!~"2.."}  failed pushes
+		//   loki_write_dropped_entries_total                                lost entries
+		min_backoff_period  = "500ms"
+		max_backoff_period  = "5m"
+		max_backoff_retries = 20
+	}
+}

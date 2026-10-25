@@ -1,0 +1,78 @@
+# Single-binary Loki for local development: one process, filesystem storage,
+# no replication. NOT highly available — see "Production" notes inline.
+
+# Production: enable and send X-Scope-OrgID per tenant (Alloy sets tenant_id).
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: info
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  # Production: replication_factor 3 with a real KV store (memberlist) and
+  # object storage (S3/GCS/Azure) instead of the local filesystem.
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    # TSDB + v13 is required for structured metadata (trace_id, span_id, request_id).
+    # Schema changes must be added as a new entry with a future `from` date, never edited in place.
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Retention is enforced by the compactor (retention_enabled below).
+  retention_period: 168h
+  allow_structured_metadata: true
+  # Accept logs up to the retention window, so Alloy can backfill after an outage.
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  # Local-scale ingestion limits; Loki rejects pushes above these with HTTP 429,
+  # which Alloy retries. Production: size per tenant from observed volume.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  per_stream_rate_limit: 4MB
+  per_stream_rate_limit_burst: 8MB
+  # Guards against accidental high-cardinality labels (e.g. trace_id as a label).
+  max_label_names_per_series: 10
+  max_global_streams_per_user: 1000
+  # Query limits keep a careless query from exhausting a laptop.
+  max_query_series: 1000
+  max_query_lookback: 168h
+  max_query_parallelism: 8
+  split_queries_by_interval: 1h
+  query_timeout: 2m
+  # Lets Grafana show log volume histograms.
+  volume_enabled: true
+
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  delete_request_store: filesystem
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+analytics:
+  reporting_enabled: false

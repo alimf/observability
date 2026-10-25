@@ -18,6 +18,9 @@ repositories {
     mavenCentral()
 }
 
+// Boot 3.4.2 manages ByteBuddy 1.15.x, which can't instrument Java 27 classes (breaks Mockito).
+ext['byte-buddy.version'] = '1.18.16'
+
 tasks.withType(JavaCompile).configureEach {
     options.release = 21
 }

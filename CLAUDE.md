@@ -40,7 +40,12 @@ Package root `org.alim.observability`:
   created only via `Order.create(...)`; status transitions via `markPaid()/markFailed()`.
 - `order.config.SecurityConfig` — permits `/api/**` and `/actuator/**` unauthenticated (so Prometheus can scrape).
 - `observability.OrderMetrics` — custom Micrometer meters: `orders.created`, `orders.creation.failures`,
-  `orders.payment.success`, `orders.creation.duration` (timer with percentile histogram).
+  `orders.payment.success`, `orders.creation.duration` (timer with percentile histogram). Note the Prometheus client
+  strips the reserved `_created` suffix, so `orders.created` is exported as `orders_total`.
+- `observability.RequestLoggingFilter` — sets `requestId` in MDC (from/to `X-Request-Id`) and logs one line per
+  completed request with ECS fields (`http.route`, `http.response.status_code`, `event.duration` in ns). Skips
+  `/actuator/**`. `SimulatedPaymentClient.authorize` is `@Observed`, producing a `payment authorize` span per retry
+  attempt.
 
 Note: `OrderService`'s package-private `@Transactional` helpers (`createPendingOrder`, `markPaid`, `markFailed`) are
 self-invoked, so their annotations have no proxy effect — everything runs in `create()`'s single transaction, which is
@@ -61,5 +66,18 @@ rolled back when the payment exception is rethrown.
 
 Prometheus (in Docker) scrapes the host app at `host.docker.internal:8080/actuator/prometheus`. The app exports traces
 over OTLP HTTP to `http://localhost:4318/v1/traces` (Tempo); override with `OTEL_EXPORTER_OTLP_ENDPOINT` and
-`TRACING_SAMPLING_PROBABILITY` (default 0.1). Grafana (:3000, anonymous viewer) is provisioned from
-`deploy/grafana/provisioning`. Alertmanager's receiver is intentionally empty. Logs are structured ECS JSON on console.
+`TRACING_SAMPLING_PROBABILITY` (default 1.0 so every logged `traceId` resolves in Tempo). Grafana (:3000, anonymous
+viewer) is provisioned from
+`deploy/grafana/provisioning`. Alertmanager's receiver is intentionally empty. Logs are structured ECS JSON (Spring
+Boot's built-in
+`StructuredLogEncoder`, flat dotted keys; MDC `traceId`/`spanId`/`requestId` become top-level fields) on the console and
+in `logs/observability.log` (override dir with `LOG_PATH`; size-rotated).
+
+Log pipeline: Alloy (`deploy/alloy/config.alloy`) tails `./logs/*.log` via a read-only bind mount and pushes to Loki
+(`deploy/loki/loki.yaml`, single binary, filesystem, TSDB schema v13, 7-day retention). Indexed labels are only
+`service_name`, `environment`, `level`, `source`; `trace_id`/`span_id`/`request_id` are Loki structured metadata, so
+query
+them as `{service_name="observability"} | trace_id="..."`, never as stream selectors. Lines that aren't JSON get
+`level="unknown"`. Alloy does not log retried push failures — check `loki_write_*` metrics on `localhost:12345/metrics`.
+Loki's image is distroless, so it has no Compose healthcheck; use `curl localhost:3100/ready`. Tempo needs the
+`tempo-init` service to chown its volume (Tempo runs as UID 10001).
