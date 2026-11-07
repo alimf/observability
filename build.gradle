@@ -1,72 +1,62 @@
 plugins {
-    id 'java'
-    id 'org.springframework.boot' version '3.4.2'
-    id 'io.spring.dependency-management' version '1.1.7'
+    id 'org.springframework.boot' version '3.4.2' apply false
+    id 'io.spring.dependency-management' version '1.1.7' apply false
 }
 
-group = 'org.alim'
-version = '0.0.1-SNAPSHOT'
-description = 'observability'
+allprojects {
+    group = 'org.alim'
+    version = '0.0.1-SNAPSHOT'
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(27)
+    repositories {
+        mavenCentral()
     }
 }
 
-repositories {
-    mavenCentral()
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'io.spring.dependency-management'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(27)
+        }
+    }
+
+    // Boot 3.4.2 manages ByteBuddy 1.15.x, which can't instrument Java 27 classes (breaks Mockito).
+    ext['byte-buddy.version'] = '1.18.16'
+
+    // Spring Boot 3.4.2's Spring Framework can't read newer class files.
+    tasks.withType(JavaCompile).configureEach {
+        options.release = 21
+    }
+
+    dependencyManagement {
+        imports {
+            mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
+            mavenBom 'org.springframework.cloud:spring-cloud-dependencies:2024.0.0'
+        }
+    }
+
+    dependencies {
+        compileOnly 'org.projectlombok:lombok:1.18.48'
+        annotationProcessor 'org.projectlombok:lombok:1.18.48'
+        testCompileOnly 'org.projectlombok:lombok:1.18.48'
+        testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
+
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
 }
 
-// Boot 3.4.2 manages ByteBuddy 1.15.x, which can't instrument Java 27 classes (breaks Mockito).
-ext['byte-buddy.version'] = '1.18.16'
-
-tasks.withType(JavaCompile).configureEach {
-    options.release = 21
+// Deployable services are Spring Boot apps; libs/* are plain libraries.
+configure(subprojects.findAll { it.path.startsWith(':services:') }) {
+    apply plugin: 'org.springframework.boot'
 }
 
-dependencies {
-    // Spring Boot Starters
-    implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.springframework.boot:spring-boot-starter-data-rest'
-    implementation 'org.springframework.boot:spring-boot-starter-jersey'
-    implementation 'org.springframework.boot:spring-boot-starter-security'
-    implementation 'org.springframework.boot:spring-boot-starter-aop'
-    implementation 'org.springframework.boot:spring-boot-starter-actuator'
-    implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.springframework.boot:spring-boot-loader-tools'
-
-    //db migrations
-    implementation 'org.flywaydb:flyway-core'
-    implementation 'org.flywaydb:flyway-database-postgresql'
-
-    // Spring Data Extensions
-    implementation 'org.springframework.data:spring-data-envers'
-
-    // Observability & Metrics
-    implementation 'io.micrometer:micrometer-registry-prometheus'
-    implementation 'io.micrometer:micrometer-tracing-bridge-otel'
-    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
-
-    // Resiliency
-    implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
-
-    // Database
-    runtimeOnly 'org.postgresql:postgresql'
-
-    // Lombok
-    compileOnly 'org.projectlombok:lombok:1.18.48'
-    annotationProcessor 'org.projectlombok:lombok:1.18.48'
-
-    // Testing
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testRuntimeOnly 'com.h2database:h2'
-    testCompileOnly 'org.projectlombok:lombok:1.18.48'
-    testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-}
-
-tasks.named('test') {
-    useJUnitPlatform()
+configure(subprojects.findAll { it.path.startsWith(':libs:') }) {
+    apply plugin: 'java-library'
 }

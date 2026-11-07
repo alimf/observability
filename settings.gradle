@@ -1,1 +1,6 @@
 rootProject.name = 'observability'
+
+include 'libs:common'
+include 'services:user-service'
+include 'services:order-service'
+include 'services:api-gateway'

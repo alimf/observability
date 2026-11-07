@@ -1,39 +1,74 @@
 # Observability
 
-A Spring Boot sample service for creating and retrieving orders, with PostgreSQL persistence and a local Prometheus,
-Grafana, Alertmanager, and Tempo stack. The payment client is simulated so order metrics, traces, dashboards, and alerts
-can be exercised without an external payment provider.
+A small microservice system (API gateway, user service, order service) built to exercise a local observability stack:
+Prometheus metrics, OpenTelemetry traces to Tempo, logs through Alloy to Loki, Grafana dashboards, and Alertmanager
+alerts. Payment is simulated so failures, retries, and circuit-breaker trips actually happen.
+
+## Architecture
+
+```
+                         ┌────────────────────┐
+  client ──────────────► │ api-gateway :8080  │  routing, X-Request-Id, timeouts
+                         └─────────┬──────────┘
+              /api/v1/auth, /users │            │ /api/v1/orders
+                         ┌─────────▼────────┐  ┌▼──────────────────┐
+                         │ user-service     │  │ order-service     │
+                         │ :8081            │  │ :8082             │
+                         │ register, login, │  │ create/get/list/  │
+                         │ issues JWTs      │  │ update own orders │
+                         └───┬──────────┬───┘  └───┬───────────────┘
+                   user_db ◄─┘          │          └─► order_db
+                                        │ GET /.well-known/jwks.json (public keys)
+                                        └───────────► verified locally by order-service
+```
+
+| Module                   | Purpose                                                                                                                                                                 |
+|--------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `services/api-gateway`   | Spring Cloud Gateway (reactive). Single entry point; routes by path.                                                                                                    |
+| `services/user-service`  | Registration, login, user profile. The only service that issues tokens.                                                                                                 |
+| `services/order-service` | Orders and the simulated payment client. Trusts tokens, never calls the user service.                                                                                   |
+| `libs/common`            | Servlet-service platform code, wired by auto-configuration: request logging filter, RFC 9457 error handling, stateless JWT resource-server security. No business logic. |
+
+Design decisions:
+
+- **Database per service.** `user_db` and `order_db`, each with its own login role
+  (`deploy/postgres/init-databases.sql`).
+  No service reads another's tables.
+- **Stateless auth with asymmetric JWTs.** `POST /api/v1/auth/login` returns an RS256 access token. Other services
+  verify
+  signature, issuer, audience, and expiry against the user service's JWKS (cached, fetched lazily), so there is no
+  per-request call between services and the user service can be down without breaking order reads/writes for users
+  who already hold a token.
+- **The acting user always comes from the token subject**, never from a request body. Orders are scoped to their owner;
+  another user's order is reported as `404`, not `403`, so IDs can't be probed.
+- **Zero trust behind the gateway.** Every service enforces authentication itself; the gateway only routes.
+- **Errors are RFC 9457 `application/problem+json`** with extension members `code` (stable, machine-readable) and
+  `timestamp`; validation errors add an `errors` list of `{field, message}`.
 
 ## Technology
 
 - Java 27 Gradle toolchain; compilation targets Java 21 bytecode (`options.release = 21`) for compatibility with the
   Spring Framework version managed by Spring Boot 3.4.2.
-- Spring Boot 3.4.2, Spring Data JPA, Hibernate, and Flyway.
-- PostgreSQL 16 for local development.
-- Micrometer/Prometheus metrics, OpenTelemetry traces, and Resilience4j retry/circuit-breaker instrumentation.
-- Docker Compose provisions the database and observability tools. Run the application separately with Gradle.
+- Spring Boot 3.4.2, Spring Cloud 2024.0.0 (gateway), Spring Security OAuth2 resource server, Spring Data JPA, Flyway.
+- PostgreSQL 16, Micrometer/Prometheus, OpenTelemetry, Resilience4j.
 
 ## Run locally
 
 Prerequisites: Docker Compose and a JDK 27 installation available to Gradle.
 
-Start PostgreSQL and the observability stack:
-
 ```bash
-docker compose up -d
+docker compose up -d                      # Postgres + observability stack
+./gradlew :services:user-service:bootRun  # :8081
+./gradlew :services:order-service:bootRun # :8082   (separate terminals)
+./gradlew :services:api-gateway:bootRun   # :8080
 ```
 
-Run the application in another terminal:
+> **Upgrading from the single-app layout?** Postgres only runs its init script when the volume is created. Run
+> `docker compose down -v` once so `user_db` and `order_db` get created (this deletes old local data).
 
-```bash
-./gradlew bootRun
-```
-
-The app listens on port `8080`. Flyway creates the `app_schema` schema and applies the order-table migration on startup.
-The local database uses the `observability` database, username, and password configured in `docker-compose.yml` and
-`src/main/resources/application.yaml`.
-
-Open the local tools:
+With no JWT keys configured, the user service generates an ephemeral RSA key pair at startup (logged as a warning), so
+tokens stop working after it restarts. For stable keys, set `JWT_PRIVATE_KEY` (PKCS#8 PEM) and `JWT_PUBLIC_KEY`
+(X.509 PEM).
 
 | Service         | URL                     |
 |-----------------|-------------------------|
@@ -42,73 +77,81 @@ Open the local tools:
 | Alertmanager    | <http://localhost:9093> |
 | Tempo query API | <http://localhost:3200> |
 
-Grafana is provisioned with Prometheus and Tempo data sources and an Orders dashboard. Prometheus scrapes the app at
-`host.docker.internal:8080`. To stop the services, run `docker compose down`; persistent database and Prometheus/Tempo
-data are stored in named Docker volumes.
+## API
 
-## Order API
+All client calls go through the gateway on `:8080`. Base path `/api/v1`.
 
-The API is rooted at `/api/v1/orders`. For example, create an order:
-
-```bash
-curl -i -X POST http://localhost:8080/api/v1/orders \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "customerId": "11111111-1111-1111-1111-111111111111",
-    "amount": 42.00
-  }'
-```
-
-A successful request returns `201 Created` with an order containing its ID, customer ID, amount, status, and creation
-time. The payment client simulates a 10% per-attempt decline rate and 20–150 ms of network latency; Resilience4j retries
-failed calls up to three attempts and opens the circuit breaker when its configured failure threshold is reached.
-
-Retrieve an order by its UUID:
+| Method  | Path           | Auth   | Description                                                                           |
+|---------|----------------|--------|---------------------------------------------------------------------------------------|
+| `POST`  | `/users`       | public | Register. `201` + `Location`; `409` if the email is taken.                            |
+| `POST`  | `/auth/login`  | public | Exchange email and password for a bearer token.                                       |
+| `GET`   | `/users/me`    | bearer | The caller's profile.                                                                 |
+| `POST`  | `/orders`      | bearer | Create an order for the caller. `201` + `Location`.                                   |
+| `GET`   | `/orders`      | bearer | The caller's orders, newest first. `?page=0&size=20` (max 100).                       |
+| `GET`   | `/orders/{id}` | bearer | One of the caller's orders.                                                           |
+| `PATCH` | `/orders/{id}` | bearer | Update an order. Currently `{"status": "CANCELLED"}`; `409` if it can't be cancelled. |
 
 ```bash
-curl http://localhost:8080/api/v1/orders/ORDER_ID
+# register, log in, create an order
+curl -s -X POST localhost:8080/api/v1/users -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","password":"correct-horse-battery","displayName":"Ada"}'
+
+TOKEN=$(curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","password":"correct-horse-battery"}' | jq -r .access_token)
+
+curl -i -X POST localhost:8080/api/v1/orders -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"amount": 42.00}'
+
+curl -X PATCH localhost:8080/api/v1/orders/ORDER_ID -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"status": "CANCELLED"}'
 ```
 
-Replace `ORDER_ID` with the UUID returned when creating an order.
-
-Request validation requires a customer UUID and a positive amount. Errors use a JSON body with `code`, `message`, and
-`timestamp`; validation errors return `400`, missing orders return `404`, payment failures return `502`, and an open
-payment circuit breaker returns `503`.
+Status codes: validation `400`, missing/invalid token `401` (with `WWW-Authenticate`), unknown or foreign order `404`,
+conflicts `409`, payment failure `502`, open payment circuit breaker `503`. The payment client simulates a 10%
+per-attempt decline rate and 20–150 ms latency; Resilience4j retries up to three attempts and opens the circuit
+breaker at its failure threshold.
 
 ## Observability
 
-- Prometheus metrics: <http://localhost:8080/actuator/prometheus>
-- Health check: <http://localhost:8080/actuator/health>
-- Other exposed Actuator endpoints: `/actuator/info` and `/actuator/metrics`
-- Custom order metrics: `orders.created`, `orders.creation.failures`, `orders.payment.success`, and
-  `orders.creation.duration`.
-- Traces are exported over OTLP HTTP to Tempo at `http://localhost:4318/v1/traces`. Sampling defaults to `0.1`.
-- Prometheus alert rules cover app availability, order failure rate, p99 creation latency, and an open payment circuit
-  breaker. Alertmanager is included with an intentionally empty receiver; configure a notification integration in
-  `deploy/alertmanager/alertmanager.yml` to receive alerts.
+Each service exposes `/actuator/health` and `/actuator/prometheus`, exports traces over OTLP HTTP to Tempo
+(`http://localhost:4318/v1/traces`, sampling default `1.0`), and writes ECS JSON logs to `logs/<service-name>.log`,
+which
+Alloy ships to Loki. A request carries one `X-Request-Id` and one trace across gateway and services.
 
-The `/api/**` and `/actuator/**` routes are permitted without authentication in this sample so Prometheus can scrape
-metrics. Do not expose this configuration to an untrusted network.
+- Prometheus jobs: `api-gateway`, `user-service`, `order-service`.
+- Custom metrics: order service `orders.created`, `orders.creation.failures`, `orders.payment.success`,
+  `orders.creation.duration`; user service `users.registered`, `users.logins{outcome}`.
+- Alerts: `ServiceDown`, `HighLoginFailureRate`, `HighOrderFailureRate`, `HighOrderCreationLatencyP99`,
+  `PaymentCircuitBreakerOpen`. Alertmanager's receiver is intentionally empty; configure one in
+  `deploy/alertmanager/alertmanager.yml`.
+
+`/actuator/**` is unauthenticated so Prometheus can scrape it. Do not expose these ports to an untrusted network;
+in a real deployment, move management endpoints to a separate internal port.
 
 ## Configuration
 
-The default application configuration is in `src/main/resources/application.yaml`. Tracing can be adjusted with:
+Each service has its own `src/main/resources/application.yaml`. Useful overrides:
 
-```bash
-TRACING_SAMPLING_PROBABILITY=0.5 \
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces \
-./gradlew bootRun
-```
-
-Update the datasource settings in `application.yaml` if using a PostgreSQL instance other than the local Compose
-service.
+| Variable                                                                  | Service     | Default                                                    |
+|---------------------------------------------------------------------------|-------------|------------------------------------------------------------|
+| `DB_USERNAME` / `DB_PASSWORD`                                             | user, order | `user_service` / `order_service` (same as name)            |
+| `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY`                                      | user        | empty → ephemeral dev keys                                 |
+| `JWT_ISSUER` / `JWT_AUDIENCE`                                             | user, order | `http://localhost:8081` / `observability-api` (must match) |
+| `USER_SERVICE_JWKS_URI`                                                   | order       | `http://localhost:8081/.well-known/jwks.json`              |
+| `USER_SERVICE_URL` / `ORDER_SERVICE_URL`                                  | gateway     | `http://localhost:8081` / `:8082`                          |
+| `TRACING_SAMPLING_PROBABILITY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_PATH` | all         | `1.0`, Tempo on localhost, `logs`                          |
 
 ## Tests
-
-Run the test suite with:
 
 ```bash
 ./gradlew test
 ```
 
-Tests use an in-memory H2 database in PostgreSQL compatibility mode and do not require the Compose services.
+Tests use in-memory H2 in PostgreSQL mode and need no Compose services. A test `application.yaml` replaces the main one
+entirely, so settings a test needs must be repeated there.
+
+## Not included (typical next steps)
+
+Refresh tokens and logout/revocation, login rate limiting or lockout, service discovery (routes are static URLs),
+per-service container images and Compose entries, an `Idempotency-Key` for order creation, and event-driven integration
+(outbox + broker) if services ever need to react to each other's changes.

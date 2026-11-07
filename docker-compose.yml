@@ -1,5 +1,6 @@
-# Local observability stack for the app, which you run separately with
-# `./gradlew bootRun`. Prometheus scrapes the app on the Docker host.
+# Local infrastructure for the microservices (api-gateway :8080, user-service :8081,
+# order-service :8082), which you run separately with `./gradlew :services:<name>:bootRun`.
+# Prometheus scrapes them on the Docker host.
 services:
 
   postgres:
@@ -12,6 +13,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # Creates user_db and order_db (one database per service) on first start only.
+      - ./deploy/postgres/init-databases.sql:/docker-entrypoint-initdb.d/10-init-databases.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U observability"]
       interval: 5s

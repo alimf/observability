@@ -1,0 +1,29 @@
+# Shadows src/main/resources/application.yaml entirely (same file name on the test classpath).
+spring:
+  application:
+    name: order-service
+
+  datasource:
+    url: jdbc:h2:mem:order-service;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # OrderControllerTest authenticates with spring-security-test's jwt() post-processor and
+          # never fetches this; JwtVerificationTest overrides it with a local JWKS server.
+          jwk-set-uri: http://localhost:0/.well-known/jwks.json
+          issuer-uri: http://localhost:8081
+          audiences: observability-api
+
+management:
+  tracing:
+    sampling:
+      probability: 0

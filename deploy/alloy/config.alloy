@@ -1,7 +1,8 @@
 // Log pipeline: discover -> tail -> parse ECS JSON -> labels + structured metadata -> Loki.
 //
-// The app runs on the host and writes logs/observability.log, which docker-compose
-// bind-mounts read-only at /var/log/app. To move to containers or Kubernetes, replace
+// The services run on the host and each writes logs/<service-name>.log, which docker-compose
+// bind-mounts read-only at /var/log/app. The service_name label comes from each line's ECS
+// service.name, so all services share this one pipeline. To move to containers or Kubernetes, replace
 // only the discovery/source blocks (e.g. discovery.kubernetes + loki.source.kubernetes);
 // the loki.process and loki.write blocks stay the same.
 
@@ -16,7 +17,7 @@ logging {
 
 local.file_match "app" {
 	path_targets = [{
-		// Only the active file; rotated files are gzipped (*.gz) and were already shipped.
+		// Only the active files; rotated files are gzipped (*.gz) and were already shipped.
 		"__path__" = "/var/log/app/*.log",
 		"source"   = "file",
 		// Fallback for lines that aren't valid JSON; overwritten by the JSON service.name.

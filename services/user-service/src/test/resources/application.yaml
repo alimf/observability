@@ -1,0 +1,30 @@
+# Shadows src/main/resources/application.yaml entirely (same file name on the test classpath).
+spring:
+  application:
+    name: user-service
+
+  datasource:
+    url: jdbc:h2:mem:user-service;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+app:
+  security:
+    public-paths:
+      - POST /api/v1/users
+      - POST /api/v1/auth/login
+      - /.well-known/jwks.json
+  jwt:
+    issuer: http://localhost:8081
+    audience: observability-api
+    access-token-ttl: 1h
+
+management:
+  tracing:
+    sampling:
+      probability: 0

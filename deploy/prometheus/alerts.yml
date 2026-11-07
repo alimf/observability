@@ -1,15 +1,36 @@
 groups:
-  - name: observability-app
+  - name: platform
     rules:
 
-      - alert: AppDown
-        expr: up{job="observability-app"} == 0
+      - alert: ServiceDown
+        expr: up{job=~"api-gateway|user-service|order-service"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Observability app is unreachable"
+          summary: "{{ $labels.job }} is unreachable"
           description: "Prometheus has not been able to scrape {{ $labels.job }} for 1 minute."
+
+  - name: user-service
+    rules:
+
+      - alert: HighLoginFailureRate
+        expr: |
+          sum(rate(users_logins_total{outcome="failure"}[5m]))
+          /
+          clamp_min(sum(rate(users_logins_total[5m])), 1e-9)
+          > 0.5
+          and
+          sum(rate(users_logins_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High login failure rate"
+          description: "More than 50% of login attempts have failed over the last 5 minutes, which can indicate credential stuffing or a broken client."
+
+  - name: order-service
+    rules:
 
       - alert: HighOrderFailureRate
         expr: |

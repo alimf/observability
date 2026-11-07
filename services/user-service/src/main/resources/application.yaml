@@ -1,0 +1,100 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: user-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/user_db?currentSchema=user_schema
+    username: ${DB_USERNAME:user_service}
+    password: ${DB_PASSWORD:user_service}
+
+  flyway:
+    enabled: true
+    default-schema: user_schema
+    schemas: user_schema
+    create-schemas: true
+    locations: classpath:db/migration
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        create_namespaces: true
+        default_schema: user_schema
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+app:
+  security:
+    # Reachable without a token: sign-up, login, and the JWKS other services verify tokens against.
+    public-paths:
+      - POST /api/v1/users
+      - POST /api/v1/auth/login
+      - /.well-known/jwks.json
+  jwt:
+    # PEM contents (PKCS#8 private, X.509 public). Empty = ephemeral dev keys; see JwtProperties.
+    private-key: ${JWT_PRIVATE_KEY:}
+    public-key: ${JWT_PUBLIC_KEY:}
+    issuer: ${JWT_ISSUER:http://localhost:8081}
+    audience: ${JWT_AUDIENCE:observability-api}
+    access-token-ttl: 1h
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - metrics
+          - prometheus
+
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+
+  tracing:
+    sampling:
+      # 1.0 locally so every trace ID found in Loki resolves in Tempo.
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  file:
+    # Tailed by Grafana Alloy (deploy/alloy/config.alloy) through a read-only bind mount.
+    name: ${LOG_PATH:logs}/${spring.application.name}.log
+
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
+      total-size-cap: 200MB
+
+  structured:
+    format:
+      console: ecs
+      file: ecs
+    ecs:
+      service:
+        environment: ${APP_ENVIRONMENT:local}
+
+  level:
+    root: INFO
+    org.alim: INFO
